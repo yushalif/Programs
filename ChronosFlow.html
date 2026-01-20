@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ChronosFlow | Advanced Routine Tracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; transition: background-color 0.3s ease; }
+        .day-row:nth-child(odd) { background-color: rgba(243, 244, 246, 0.8); }
+        .day-row:nth-child(even) { background-color: rgba(229, 231, 235, 0.8); }
+        .task-card { min-width: 160px; transition: all 0.2s ease; cursor: pointer; }
+        .missed-status { background-color: #B00020 !important; color: white; }
+        .done-status { background-color: #4CAF50 !important; color: white; }
+        .custom-scrollbar::-webkit-scrollbar { height: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-900 pb-20">
+
+    <header class="sticky top-0 z-30 bg-white/80 backdrop-blur-md border-b px-4 py-3 flex justify-between items-center">
+        <h1 class="text-xl font-bold tracking-tight text-indigo-600">ChronosFlow</h1>
+        <div class="flex gap-2">
+            <button onclick="switchTab('stack')" class="p-2 hover:bg-gray-100 rounded-full"><i data-lucide="calendar"></i></button>
+            <button onclick="switchTab('stats')" class="p-2 hover:bg-gray-100 rounded-full"><i data-lucide="pie-chart"></i></button>
+            <div class="relative group">
+                <button class="p-2 hover:bg-gray-100 rounded-full"><i data-lucide="settings"></i></button>
+                <div class="absolute right-0 mt-2 w-48 bg-white border rounded-xl shadow-xl hidden group-hover:block z-50">
+                    <button onclick="exportData()" class="w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center gap-2 border-b text-sm">
+                        <i data-lucide="download" class="w-4 h-4"></i> Export Backup
+                    </button>
+                    <label class="w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center gap-2 cursor-pointer text-sm">
+                        <i data-lucide="upload" class="w-4 h-4"></i> Import Data
+                        <input type="file" id="importFile" class="hidden" onchange="importData(event)">
+                    </label>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main id="tab-stack" class="max-w-4xl mx-auto p-4 space-y-4">
+        <div id="weekly-stack-container" class="space-y-2"></div>
+    </main>
+
+    <main id="tab-stats" class="max-w-4xl mx-auto p-4 hidden">
+        <div class="bg-white p-6 rounded-2xl shadow-sm border">
+            <h2 class="text-lg font-semibold mb-4">7-Day Time Investment</h2>
+            <canvas id="statsChart" width="400" height="400"></canvas>
+        </div>
+    </main>
+
+    <button onclick="openModal()" class="fixed bottom-6 right-6 w-14 h-14 bg-indigo-600 text-white rounded-full shadow-lg flex items-center justify-center hover:bg-indigo-700 transition-transform active:scale-95 z-40">
+        <i data-lucide="plus"></i>
+    </button>
+
+    <div id="modal" class="fixed inset-0 bg-black/50 z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl w-full max-w-md p-6">
+            <h3 class="text-xl font-bold mb-4">New Activity</h3>
+            <div class="space-y-4">
+                <input id="taskTitle" type="text" placeholder="Task Name" class="w-full border rounded-lg p-2 focus:ring-2 ring-indigo-500 outline-none">
+                <select id="taskCategory" class="w-full border rounded-lg p-2">
+                    <option value="WORK">Work</option>
+                    <option value="WORKOUT">Workout</option>
+                    <option value="FOOD">Food</option>
+                    <option value="STUDY">Study</option>
+                </select>
+                <div class="flex gap-2">
+                    <input id="taskTime" type="time" class="flex-1 border rounded-lg p-2">
+                    <input id="taskDuration" type="number" placeholder="Duration (min)" class="w-32 border rounded-lg p-2">
+                </div>
+                <div class="flex justify-between items-center">
+                    <span class="text-sm font-medium">Assign Day:</span>
+                    <select id="taskDay" class="border rounded-lg p-1">
+                        <option value="0">Monday</option><option value="1">Tuesday</option>
+                        <option value="2">Wednesday</option><option value="3">Thursday</option>
+                        <option value="4">Friday</option><option value="5">Saturday</option>
+                        <option value="6">Sunday</option>
+                    </select>
+                </div>
+            </div>
+            <div class="flex gap-2 mt-6">
+                <button onclick="closeModal()" class="flex-1 py-2 text-gray-500">Cancel</button>
+                <button onclick="saveTask()" class="flex-1 py-2 bg-indigo-600 text-white rounded-lg font-bold">Save Activity</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- State Management ---
+        let tasks = JSON.parse(localStorage.getItem('chronos_tasks')) || [];
+        const categories = {
+            WORK: { color: '#2196F3', icon: 'briefcase' },
+            WORKOUT: { color: '#4CAF50', icon: 'dumbbell' },
+            FOOD: { color: '#FF9800', icon: 'utensils' },
+            STUDY: { color: '#9C27B0', icon: 'book-open' }
+        };
+        const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+        // --- Data Import/Export Logic ---
+        function exportData() {
+            const dataStr = JSON.stringify(tasks, null, 2);
+            const blob = new Blob([dataStr], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `chronosflow_backup_${new Date().toISOString().slice(0,10)}.json`;
+            link.click();
+        }
+
+        function importData(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const importedTasks = JSON.parse(e.target.result);
+                    if (Array.isArray(importedTasks)) {
+                        tasks = importedTasks;
+                        saveAndRefresh();
+                        alert("Data imported successfully!");
+                    }
+                } catch (err) {
+                    alert("Invalid backup file.");
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        // --- Accountability Logic ---
+        function runStatusChecks() {
+            const now = new Date();
+            const currentHour = now.getHours();
+            const currentMin = now.getMinutes();
+
+            tasks = tasks.map(task => {
+                if (task.status === 'PENDING') {
+                    const [tHour, tMin] = task.time.split(':').map(Number);
+                    const endTimeInMinutes = (tHour * 60) + tMin + parseInt(task.duration);
+                    const currentTimeInMinutes = (currentHour * 60) + currentMin;
+
+                    // If 1 minute past end time and still pending, it's MISSED
+                    if (currentTimeInMinutes > endTimeInMinutes + 1) {
+                        return { ...task, status: 'MISSED' };
+                    }
+                }
+                return task;
+            });
+            saveAndRefresh();
+        }
+
+        // --- UI Core ---
+        function renderStack() {
+            const container = document.getElementById('weekly-stack-container');
+            container.innerHTML = '';
+
+            days.forEach((dayName, index) => {
+                const dayTasks = tasks.filter(t => parseInt(t.day) === index);
+                const row = document.createElement('div');
+                row.className = 'day-row rounded-xl p-4 overflow-hidden';
+                row.innerHTML = `
+                    <div class="flex justify-between items-center mb-2">
+                        <h3 class="font-bold text-gray-500 uppercase text-[10px] tracking-widest">${dayName}</h3>
+                    </div>
+                    <div class="flex gap-3 overflow-x-auto pb-2 custom-scrollbar">
+                        ${dayTasks.length ? dayTasks.map(t => renderTaskCard(t)).join('') : '<p class="text-gray-400 text-xs italic">Clear schedule</p>'}
+                    </div>
+                `;
+                container.appendChild(row);
+            });
+            lucide.createIcons();
+        }
+
+        function renderTaskCard(task) {
+            const cat = categories[task.category];
+            const statusClass = task.status === 'MISSED' ? 'missed-status' : (task.status === 'DONE' ? 'done-status' : '');
+            
+            return `
+                <div class="task-card ${statusClass} bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between" onclick="toggleTask('${task.id}')">
+                    <div class="flex justify-between items-start mb-4">
+                        <div class="p-2 rounded-lg bg-gray-50" style="background-color: ${task.status === 'PENDING' ? cat.color + '20' : 'rgba(255,255,255,0.2)'}">
+                            <i data-lucide="${cat.icon}" class="w-4 h-4" style="color: ${task.status === 'PENDING' ? cat.color : 'white'}"></i>
+                        </div>
+                        <span class="text-[10px] font-bold opacity-60">${task.time}</span>
+                    </div>
+                    <div>
+                        <h4 class="text-sm font-bold truncate leading-tight">${task.title}</h4>
+                        <p class="text-[10px] opacity-60 font-medium">${task.duration} MIN SESSION</p>
+                    </div>
+                </div>
+            `;
+        }
+
+        // --- Actions ---
+        function saveTask() {
+            const newTask = {
+                id: Date.now().toString(),
+                title: document.getElementById('taskTitle').value || 'Untitled',
+                category: document.getElementById('taskCategory').value,
+                time: document.getElementById('taskTime').value || '12:00',
+                duration: document.getElementById('taskDuration').value || '30',
+                day: document.getElementById('taskDay').value,
+                status: 'PENDING'
+            };
+            tasks.push(newTask);
+            saveAndRefresh();
+            closeModal();
+        }
+
+        function toggleTask(id) {
+            tasks = tasks.map(t => {
+                if (t.id === id) {
+                    let nextStatus;
+                    if (t.status === 'PENDING') nextStatus = 'DONE';
+                    else if (t.status === 'DONE') nextStatus = 'PENDING';
+                    else nextStatus = 'PENDING'; // Can reset MISSED to PENDING
+                    return { ...t, status: nextStatus };
+                }
+                return t;
+            });
+            saveAndRefresh();
+        }
+
+        function saveAndRefresh() {
+            localStorage.setItem('chronos_tasks', JSON.stringify(tasks));
+            renderStack();
+            updateChart();
+        }
+
+        function switchTab(tab) {
+            document.getElementById('tab-stack').classList.toggle('hidden', tab !== 'stack');
+            document.getElementById('tab-stats').classList.toggle('hidden', tab !== 'stats');
+        }
+
+        function openModal() { document.getElementById('modal').classList.remove('hidden'); }
+        function closeModal() { document.getElementById('modal').classList.add('hidden'); }
+
+        let statsChart;
+        function updateChart() {
+            const ctx = document.getElementById('statsChart').getContext('2d');
+            const data = {
+                labels: Object.keys(categories),
+                datasets: [{
+                    label: 'Minutes',
+                    data: Object.keys(categories).map(cat => 
+                        tasks.filter(t => t.category === cat && t.status === 'DONE')
+                             .reduce((acc, curr) => acc + parseInt(curr.duration), 0)
+                    ),
+                    backgroundColor: Object.values(categories).map(c => c.color),
+                    borderWidth: 0,
+                    hoverOffset: 20
+                }]
+            };
+
+            if (statsChart) statsChart.destroy();
+            statsChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: data,
+                options: { cutout: '80%', plugins: { legend: { position: 'bottom' } } }
+            });
+        }
+
+        // --- Start App ---
+        renderStack();
+        updateChart();
+        setInterval(runStatusChecks, 30000);
+    </script>
+</body>
+</html>
